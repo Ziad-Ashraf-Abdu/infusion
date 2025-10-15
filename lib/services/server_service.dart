@@ -1,0 +1,95 @@
+// services/server_service.dart
+import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
+import '../models/patient.dart';
+
+class ServerService {
+  // *** Replace with your actual Hugging Face Space URL ***
+  // It will look something like 'your-username-your-space-name.hf.space'
+  final String _huggingFaceSpaceUrl = "https://huggingface.co/spaces/Zee1604/infusion";
+
+  Timer? _pollingTimer;
+  WebSocketChannel? _channel;
+  StreamSubscription? _socketSubscription;
+
+  final List<Patient> _patients = [];
+  Function(Patient)? onPatientUpdate;
+  Function(Patient)? onAirBubbleDetected;
+
+  // Starts polling for data and opens a WebSocket connection
+  void startMonitoring(List<Patient> patients) {
+    _patients.clear();
+    _patients.addAll(patients);
+
+    _stopPreviousConnections();
+
+    // Start polling for patient data via HTTP GET requests
+    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      for (var patient in _patients) {
+        _fetchPatientData(patient.patientId);
+      }
+    });
+
+    // Connect to WebSocket for real-time flags
+    _connectWebSocket();
+  }
+
+  // Fetches the latest data for a specific patient
+  Future<void> _fetchPatientData(String patientId) async {
+    try {
+      final response = await http.get(Uri.https(_huggingFaceSpaceUrl, '/patient/$patientId'));
+
+      if (response.statusCode == 200) {
+        final serverData = json.decode(response.body);
+        final patient = _patients.firstWhere((p) => p.patientId == patientId);
+
+        final hadAirBubble = patient.hasAirBubble;
+        patient.updateFromServer(serverData);
+
+        onPatientUpdate?.call(patient);
+
+        if (patient.hasAirBubble && !hadAirBubble) {
+          onAirBubbleDetected?.call(patient);
+        }
+      }
+    } catch (e) {
+      print("Error fetching data for patient $patientId: $e");
+    }
+  }
+
+  // Connects to the WebSocket server to listen for commands
+  void _connectWebSocket() {
+    try {
+      _channel = WebSocketChannel.connect(
+        Uri.parse('wss://$_huggingFaceSpaceUrl/ws'),
+      );
+
+      _socketSubscription = _channel!.stream.listen((message) {
+        print('Received command from server: $message');
+        // Handle incoming commands if needed in the future
+      });
+    } catch (e) {
+      print("Error connecting to WebSocket: $e");
+    }
+  }
+
+  // Sends a flag/command to the server via WebSocket
+  void sendCommand(String command) {
+    if (_channel != null) {
+      _channel!.sink.add(command);
+      print('Sent command: $command');
+    }
+  }
+
+  void _stopPreviousConnections() {
+    _pollingTimer?.cancel();
+    _socketSubscription?.cancel();
+    _channel?.sink.close();
+  }
+
+  void dispose() {
+    _stopPreviousConnections();
+  }
+}
