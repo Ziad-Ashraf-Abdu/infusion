@@ -3,7 +3,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../models/patient.dart';
 
 class QRScannerScreen extends StatefulWidget {
-  const QRScannerScreen({Key? key}) : super(key: key);
+  const QRScannerScreen({super.key});
 
   @override
   State<QRScannerScreen> createState() => _QRScannerScreenState();
@@ -142,23 +142,48 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               ],
             ),
           ),
-          // Simulate scan button for testing
+          // Simulate scan buttons for testing different scenarios
           Positioned(
             bottom: 40,
             left: 0,
             right: 0,
             child: Center(
-              child: ElevatedButton(
-                onPressed: _simulateScan,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text(
-                  'Simulate QR Scan',
-                  style: TextStyle(fontSize: 16),
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () => _simulateScan(50.0),
+                    icon: const Icon(Icons.check_circle),
+                    label: const Text('Normal (50%)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: () => _simulateScan(8.0),
+                    icon: const Icon(Icons.water_drop_outlined),
+                    label: const Text('Low Volume (8%)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: () => _simulateScan(1.5),
+                    icon: const Icon(Icons.error_outline),
+                    label: const Text('Critical (1.5%)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -167,7 +192,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
     );
   }
 
-  void _simulateScan() {
+  void _simulateScan(double liquidLevel) {
     if (_scanned) return;
 
     setState(() {
@@ -178,7 +203,15 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
     final qrData = 'PT${DateTime.now().millisecondsSinceEpoch % 10000},Dopamine,50.0';
     try {
       final patient = Patient.fromQRCode(qrData);
-      Navigator.pop(context, patient);
+      // Create a copy with the specific liquid level for testing
+      final testPatient = Patient(
+        patientId: patient.patientId,
+        drugName: patient.drugName,
+        idealDoseRate: patient.idealDoseRate,
+        currentDoseRate: patient.currentDoseRate,
+        currentLiquidLevel: liquidLevel,
+      );
+      Navigator.pop(context, testPatient);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
