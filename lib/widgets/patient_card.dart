@@ -5,15 +5,21 @@ import 'liquid_level_indicator.dart';
 
 class PatientCard extends StatelessWidget {
   final Patient patient;
+  // This callback function will be triggered when the status chip is tapped.
+  // The boolean value represents the NEW desired state (true for active, false for inactive).
+  final Function(bool) onToggleActive;
 
-  const PatientCard({Key? key, required this.patient}) : super(key: key);
+  const PatientCard({
+    Key? key,
+    required this.patient,
+    required this.onToggleActive, // Make the callback a required parameter
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     final bool isLight = Theme.of(context).brightness == Brightness.light;
     final backgroundColor = Theme.of(context).scaffoldBackgroundColor;
 
-    // Define the shadows for the soft, extruded look
     final List<BoxShadow> softShadows = [
       BoxShadow(
         color: isLight ? Colors.black.withOpacity(0.1) : Colors.black.withOpacity(0.4),
@@ -38,14 +44,12 @@ class PatientCard extends StatelessWidget {
       child: IntrinsicHeight(
         child: Row(
           children: [
-            // Left Side: Liquid Level Indicator
             SizedBox(
               width: 80,
               child: Center(
                 child: LiquidLevelIndicator(level: patient.currentLiquidLevel),
               ),
             ),
-            // Right Side: Patient Information
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(0, 16, 16, 16),
@@ -77,7 +81,18 @@ class PatientCard extends StatelessWidget {
               'Patient #${patient.patientId}',
               style: TextStyle(fontSize: 14, color: Colors.grey[500]),
             ),
-            _StatusChip(isActive: patient.isActive),
+            // The chip is now a tappable button
+            GestureDetector(
+              onTap: () {
+                // When tapped, call the provided function with the OPPOSITE
+                // of the current state.
+                onToggleActive(!patient.isActive);
+              },
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: _StatusChip(isActive: patient.isActive),
+              ),
+            ),
           ],
         ),
         Text(
@@ -139,7 +154,6 @@ class PatientCard extends StatelessWidget {
 }
 
 // Helper Widgets
-
 class _StatusChip extends StatelessWidget {
   final bool isActive;
   const _StatusChip({required this.isActive});
@@ -149,8 +163,11 @@ class _StatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: isActive ? const Color(0xFFC8E6C9) : Colors.grey.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
+          color: isActive ? const Color(0xFFC8E6C9) : Colors.grey.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: isActive ? const Color(0xFF388E3C) : Colors.grey.withOpacity(0.3)
+          )
       ),
       child: Text(
         isActive ? 'ACTIVE' : 'INACTIVE',
@@ -194,6 +211,8 @@ class _RateColumn extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
+            // NOTE: The Arduino uses mL/min, but your card shows mL/h.
+            // This is a UI display choice and is fine.
             '${rate.toStringAsFixed(1)} ml/h',
             style: TextStyle(
               fontSize: isEmphasized ? 24 : 20,
