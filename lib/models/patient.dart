@@ -4,6 +4,8 @@ class Patient {
   final double idealDoseRate;
   double currentDoseRate;
   double currentLiquidLevel;
+  double? currentFlowRate; // Add this - current actual flow rate
+  double? requiredFlowRate; // Add this - target flow rate (can use idealDoseRate or calculate from it)
   bool isActive;
   bool hasAirBubble;
 
@@ -13,6 +15,8 @@ class Patient {
     required this.idealDoseRate,
     required this.currentDoseRate,
     required this.currentLiquidLevel,
+    this.currentFlowRate, // Add this
+    this.requiredFlowRate, // Add this
     this.isActive = false,
     this.hasAirBubble = false,
   });
@@ -26,12 +30,15 @@ class Patient {
       idealDoseRate: double.parse(parts[2]),
       currentDoseRate: 0.0,
       currentLiquidLevel: 100.0,
+      requiredFlowRate: double.parse(parts[2]), // Set required flow rate to idealDoseRate
     );
   }
 
   void updateFromServer(Map<String, dynamic> serverData) {
     currentDoseRate = serverData['currentDoseRate'] ?? currentDoseRate;
     currentLiquidLevel = serverData['currentLiquidLevel'] ?? currentLiquidLevel;
+    currentFlowRate = serverData['currentFlowRate'] ?? currentFlowRate; // Add this
+    requiredFlowRate = serverData['requiredFlowRate'] ?? requiredFlowRate; // Add this
     isActive = serverData['isActive'] ?? isActive;
     hasAirBubble = serverData['hasAirBubble'] ?? hasAirBubble;
   }
