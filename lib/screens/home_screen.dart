@@ -38,9 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _setupServerListeners();
   }
 
-  // --- TTS and Alert Logic (Unchanged) ---
   Future<void> _initializeTts() async {
-    // ... TTS initialization logic ...
     try {
       await _flutterTts.awaitSpeakCompletion(true);
       if (await _flutterTts.isLanguageAvailable("en-US")) {
@@ -75,31 +73,162 @@ class _HomeScreenState extends State<HomeScreen> {
     _isSpeaking = true;
     await _flutterTts.speak(text);
   }
-  // ... Alert functions like _showAirBubbleAlert remain the same ...
 
-  // --- Server Listeners and Data Handling (Unchanged) ---
   void _setupServerListeners() {
     _serverService.onPatientUpdate = (patient) {
       if (mounted) {
         setState(() {});
         _checkLiquidLevel(patient);
+        _checkFlowRate(patient);
       }
-    };
-    _serverService.onAirBubbleDetected = (patient) {
-      _showAirBubbleAlert(patient);
     };
   }
 
   void _checkLiquidLevel(Patient patient) {
-    // ... Liquid level check logic ...
+    final percentage = patient.currentLiquidLevel;
+    String alarmType = '';
+
+    if (percentage <= 2 && percentage > 0) {
+      alarmType = 'critical';
+      _triggerAlarm(patient, alarmType, () => _showEndOfInfusionAlert(patient, percentage));
+    } else if (percentage > 2 && percentage <= 10) {
+      alarmType = 'low';
+      _triggerAlarm(patient, alarmType, () => _showLowVolumeAlert(patient, percentage));
+    }
   }
 
-  void _triggerAlarm(Patient patient, String alarmType, Function(Patient, double) alertFunction) {
-    // ... Alarm trigger logic ...
+  void _checkFlowRate(Patient patient) {
+    final currentFlowRate = patient.currentFlowRate;
+    final requiredFlowRate = patient.requiredFlowRate;
+    
+    // Check if flow rate data is available
+    if (currentFlowRate == null || requiredFlowRate == null) return;
+    
+    // Calculate the acceptable range (within 20% of required flow rate)
+    final lowerThreshold = requiredFlowRate * 0.8;  // 20% less
+    final upperThreshold = requiredFlowRate * 1.2;  // 20% more
+    
+    String alarmType = '';
+    
+    if (currentFlowRate < lowerThreshold) {
+      alarmType = 'flow_low';
+      _triggerAlarm(patient, alarmType, () => _showLowFlowRateAlert(patient));
+    } else if (currentFlowRate > upperThreshold) {
+      alarmType = 'flow_high';
+      _triggerAlarm(patient, alarmType, () => _showHighFlowRateAlert(patient));
+    }
   }
 
-  // --- New Function to Handle Pump Activation ---
-  /// This function is called by the PatientCard when the user taps the status chip.
+  void _triggerAlarm(Patient patient, String alarmType, Function() alertFunction) {
+    final alarmKey = '${patient.patientId}_$alarmType';
+    if (_lastAlarmShown[alarmKey] != alarmType) {
+      _lastAlarmShown[alarmKey] = alarmType;
+      alertFunction(); // Call the parameterless function
+    }
+  }
+
+  void _showLowFlowRateAlert(Patient patient) {
+    final currentFlowRate = patient.currentFlowRate ?? 0;
+    final requiredFlowRate = patient.requiredFlowRate ?? 0;
+    final deviation = ((requiredFlowRate - currentFlowRate) / requiredFlowRate * 100).abs();
+    
+    final msg = 'Low flow rate alert for Patient number ${patient.patientId}. Current flow rate is ${deviation.toStringAsFixed(1)} percent below required rate. Please check for occlusions.';
+    _speak(msg);
+
+    if (!mounted) return;
+
+    _showAlertDialog(
+      title: 'Low Flow Rate Alert!',
+      icon: Icons.trending_down_rounded,
+      color: Colors.orangeAccent,
+      message: 'Patient #${patient.patientId} (${patient.drugName}) has low flow rate.\n\n'
+          'Required: ${requiredFlowRate.toStringAsFixed(2)} mL/hr\n'
+          'Current: ${currentFlowRate.toStringAsFixed(2)} mL/hr\n'
+          'Deviation: ${deviation.toStringAsFixed(1)}% below required\n\n'
+          'Please check for line occlusions, kinks, or pump issues.',
+    );
+  }
+
+  void _showHighFlowRateAlert(Patient patient) {
+    final currentFlowRate = patient.currentFlowRate ?? 0;
+    final requiredFlowRate = patient.requiredFlowRate ?? 0;
+    final deviation = ((currentFlowRate - requiredFlowRate) / requiredFlowRate * 100).abs();
+    
+    final msg = 'High flow rate alert for Patient number ${patient.patientId}. Current flow rate is ${deviation.toStringAsFixed(1)} percent above required rate. Please check pump calibration.';
+    _speak(msg);
+
+    if (!mounted) return;
+
+    _showAlertDialog(
+      title: 'High Flow Rate Alert!',
+      icon: Icons.trending_up_rounded,
+      color: Colors.redAccent,
+      message: 'Patient #${patient.patientId} (${patient.drugName}) has high flow rate.\n\n'
+          'Required: ${requiredFlowRate.toStringAsFixed(2)} mL/hr\n'
+          'Current: ${currentFlowRate.toStringAsFixed(2)} mL/hr\n'
+          'Deviation: ${deviation.toStringAsFixed(1)}% above required\n\n'
+          'Please check pump calibration and patient safety.',
+    );
+  }
+
+  void _showLowVolumeAlert(Patient patient, double percentage) {
+    final msg = 'Low volume alert for Patient number ${patient.patientId}. ${percentage.toStringAsFixed(1)} percent remaining. Please prepare a new syringe or bag.';
+    _speak(msg);
+
+    if (!mounted) return;
+
+    _showAlertDialog(
+      title: 'Low Volume Alert',
+      icon: Icons.water_drop_outlined,
+      color: Colors.orangeAccent,
+      message: 'Patient #${patient.patientId} (${patient.drugName}) has ${percentage.toStringAsFixed(1)}% remaining.\n\nPlease prepare a new syringe or bag.',
+    );
+  }
+
+  void _showEndOfInfusionAlert(Patient patient, double percentage) {
+    final msg = 'Critical alert! End of infusion for Patient number ${patient.patientId}. Only ${percentage.toStringAsFixed(1)} percent remaining. Immediate intervention required.';
+    _speak(msg);
+
+    if (!mounted) return;
+
+    _showAlertDialog(
+      title: 'End of Infusion!',
+      icon: Icons.error_outline_rounded,
+      color: Colors.red,
+      message: 'Patient #${patient.patientId} (${patient.drugName}) is critically low at ${percentage.toStringAsFixed(1)}% remaining.\n\nAir may enter the line. Immediate intervention required!',
+    );
+  }
+
+  void _showAlertDialog({
+    required String title,
+    required String message,
+    required IconData icon,
+    required Color color,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(width: 12),
+            Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+          ],
+        ),
+        content: Text(message, style: const TextStyle(fontWeight: FontWeight.w500)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('ACKNOWLEDGE', style: TextStyle(color: color)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // This function is called by the PatientCard when the user taps the status chip.
   void _handleToggleActive(Patient patient, bool newStatus) {
     if (newStatus == true) {
       // User wants to ACTIVATE the pump.
@@ -131,7 +260,10 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       _serverService.startMonitoring(_patients);
       await Future.delayed(const Duration(milliseconds: 500));
-      if (mounted) _checkLiquidLevel(result);
+      if (mounted) {
+        _checkLiquidLevel(result);
+        _checkFlowRate(result);
+      }
     }
   }
 
@@ -142,7 +274,6 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // --- Build Method (Updated) ---
   @override
   Widget build(BuildContext context) {
     final isLight = widget.themeMode == ThemeMode.light;
@@ -162,7 +293,6 @@ class _HomeScreenState extends State<HomeScreen> {
           : ListView.builder(
         itemCount: _patients.length,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        // *** THIS IS THE UPDATED PART ***
         itemBuilder: (context, i) {
           final patient = _patients[i];
           return PatientCard(
@@ -183,7 +313,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildEmptyState(BuildContext context) {
-    // ... Empty state widget (unchanged) ...
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -202,15 +331,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
-  // --- Alert Dialog (for brevity, showing just the signature) ---
-  void _showAirBubbleAlert(Patient patient) { /* ... */ }
-  void _showLowVolumeAlert(Patient patient, double percentage) { /* ... */ }
-  void _showEndOfInfusionAlert(Patient patient, double percentage) { /* ... */ }
-  void _showAlertDialog({
-    required String title,
-    required String message,
-    required IconData icon,
-    required Color color,
-  }) { /* ... */ }
 }
