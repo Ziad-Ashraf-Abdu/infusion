@@ -3,116 +3,143 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
-import '../models/patient.dart'; // Make sure this path is correct
+import '../models/patient.dart';
 
 class ServerService {
-  // Use the host name for both HTTP and WebSocket
-  final String _huggingFaceHost = "Zee1604-infusion.hf.space";
+  // *** Replace with your actual Hugging Face Space URL ***
+  // It will look something like 'your-username-your-space-name.hf.space'
+  final String _huggingFaceSpaceUrl = "https://huggingface.co/spaces/Zee1604/infusion";
 
+  Timer? _pollingTimer;
   WebSocketChannel? _channel;
   StreamSubscription? _socketSubscription;
 
   final List<Patient> _patients = [];
   Function(Patient)? onPatientUpdate;
-  Function(Patient)? onAirBubbleDetected;
 
-  /// Starts monitoring by fetching initial data and then listening on WebSocket.
+  // Starts polling for data and opens a WebSocket connection
   void startMonitoring(List<Patient> patients) {
     _patients.clear();
     _patients.addAll(patients);
 
     _stopPreviousConnections();
 
-    // 1. Fetch the *initial* data for each patient via HTTP.
-    for (var patient in _patients) {
-      _fetchInitialPatientData(patient.patientId);
-    }
+    // Start polling for patient data via HTTP GET requests
+    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      for (var patient in _patients) {
+        _fetchPatientData(patient.patientId);
+      }
+    });
 
-    // 2. Connect to WebSocket for all *subsequent* real-time updates.
+    // Connect to WebSocket for real-time flags
     _connectWebSocket();
   }
 
-  /// Fetches the initial state of a patient when monitoring starts.
-  Future<void> _fetchInitialPatientData(String patientId) async {
+  // Fetches the latest data for a specific patient
+  Future<void> _fetchPatientData(String patientId) async {
     try {
-      final uri = Uri.https(_huggingFaceHost, '/patient/$patientId');
-      final response = await http.get(uri);
+      final response = await http.get(Uri.https(_huggingFaceSpaceUrl, '/patient/$patientId'));
 
       if (response.statusCode == 200) {
         final serverData = json.decode(response.body);
-        _updatePatientData(patientId, serverData);
-        print("✅ Fetched initial data for $patientId");
-      } else {
-        print("⚠️ Could not fetch initial data for $patientId: ${response.statusCode}");
+        final patient = _patients.firstWhere((p) => p.patientId == patientId);
+
+        // Store previous state for comparison
+        final hadAirBubble = patient.hasAirBubble;
+        
+        // Update patient data from server
+        patient.updateFromServer(serverData);
+
+        // Trigger update callback
+        onPatientUpdate?.call(patient);
+
+        // Note: Air bubble detection removed as per requirements
+        // Flow rate monitoring is now handled in HomeScreen through onPatientUpdate
       }
     } catch (e) {
-      print("❌ Error fetching initial data for patient $patientId: $e");
+      print("Error fetching data for patient $patientId: $e");
     }
   }
 
-  /// Unified function to update patient state and trigger UI callbacks.
-  void _updatePatientData(String patientId, Map<String, dynamic> serverData) {
-    try {
-      final patient = _patients.firstWhere((p) => p.patientId == patientId);
-      final hadAirBubble = patient.hasAirBubble;
-
-      patient.updateFromServer(serverData);
-      onPatientUpdate?.call(patient); // Notify UI to rebuild
-
-      if (patient.hasAirBubble && !hadAirBubble) {
-        onAirBubbleDetected?.call(patient); // Trigger specific alert
-      }
-    } catch (e) {
-      print("⚠️ Received data for an unknown or unmonitored patient: $patientId");
-    }
-  }
-
-  /// Connects to the WebSocket to listen for real-time data updates.
+  // Connects to the WebSocket server to listen for commands
   void _connectWebSocket() {
     try {
-      final uri = Uri.parse('wss://$_huggingFaceHost/ws');
-      _channel = WebSocketChannel.connect(uri);
-      print("✅ WebSocket connecting...");
+      _channel = WebSocketChannel.connect(
+        Uri.parse('wss://$_huggingFaceSpaceUrl/ws'),
+      );
 
       _socketSubscription = _channel!.stream.listen((message) {
-        print('⬅️ Received data update from server: $message');
-        final serverData = json.decode(message) as Map<String, dynamic>;
-
-        // For now, we assume any update is for the first patient.
-        // For a multi-patient app, the server would need to include the
-        // patientId in the broadcast message.
-        if (_patients.isNotEmpty) {
-          _updatePatientData(_patients.first.patientId, serverData);
-        }
-
-      }, onError: (error) {
-        print("❌ WebSocket error: $error");
-      }, onDone: () {
-        print("🔌 WebSocket connection closed. Attempting to reconnect...");
-        // Simple reconnection logic
-        Future.delayed(const Duration(seconds: 5), () => _connectWebSocket());
+        print('Received command from server: $message');
+        // Handle incoming commands if needed in the future
+        
+        // You could potentially parse flow rate data from WebSocket messages here
+        // and update patients accordingly
+        _handleWebSocketMessage(message);
       });
     } catch (e) {
-      print("❌ Error connecting to WebSocket: $e");
+      print("Error connecting to WebSocket: $e");
     }
   }
 
-  /// Sends a command to the server via WebSocket.
+  // Handle incoming WebSocket messages
+  void _handleWebSocketMessage(String message) {
+    try {
+      final data = json.decode(message);
+      
+      // Example WebSocket message format for flow rate data:
+      // {
+      //   "type": "flow_rate_update",
+      //   "patientId": "123",
+      //   "currentFlowRate": 45.2,
+      //   "requiredFlowRate": 50.0
+      // }
+      
+      if (data['type'] == 'flow_rate_update') {
+        final patientId = data['patientId'];
+        final patient = _patients.firstWhere(
+          (p) => p.patientId == patientId,
+          orElse: () => Patient(
+            patientId: patientId,
+            drugName: 'Unknown',
+            idealDoseRate: 0.0,
+            currentDoseRate: 0.0,
+            currentLiquidLevel: 0.0,
+          ),
+        );
+        
+        // Update flow rate data
+        if (data['currentFlowRate'] != null) {
+          // This would require adding a setter or making currentFlowRate non-final
+          // For now, we rely on HTTP polling for flow rate data
+        }
+        
+        onPatientUpdate?.call(patient);
+      }
+    } catch (e) {
+      print("Error handling WebSocket message: $e");
+    }
+  }
+
+  // Sends a flag/command to the server via WebSocket
   void sendCommand(String command) {
     if (_channel != null) {
-      // Structure the message as a JSON object
-      final message = json.encode({
-        "type": "command",
-        "payload": command
-      });
-      _channel!.sink.add(message);
-      print('➡️ Sent command: $command');
-    } else {
-      print("⚠️ Cannot send command, WebSocket is not connected.");
+      _channel!.sink.add(command);
+      print('Sent command: $command');
     }
+  }
+
+  // Send flow rate calibration command
+  void sendFlowRateCalibration(String patientId, double targetFlowRate) {
+    final command = json.encode({
+      'type': 'calibrate_flow_rate',
+      'patientId': patientId,
+      'targetFlowRate': targetFlowRate,
+    });
+    sendCommand(command);
   }
 
   void _stopPreviousConnections() {
+    _pollingTimer?.cancel();
     _socketSubscription?.cancel();
     _channel?.sink.close();
   }
